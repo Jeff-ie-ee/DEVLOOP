@@ -13,7 +13,7 @@
 
 The primary objective of Sprint 2 is to implement a secure Identity and Access Management (IAM) system for the DEVLOOP platform.
 
-The sprint focuses on establishing user registration, authentication, JWT-based access management and Role-Based Access Control (RBAC).
+The sprint focuses on establishing user registration, authentication, JWT-based access management, authenticated-user identification and Role-Based Access Control (RBAC).
 
 The objective is to ensure that every developer has a secure identity and that access to platform resources can be controlled according to user roles and permissions.
 
@@ -27,6 +27,7 @@ The objective is to ensure that every developer has a secure identity and that a
 - Generated and configured a secure JWT signing secret through environment variables.
 - Configured the HS256 signing algorithm.
 - Established a default access-token lifetime of 30 minutes.
+- Organized authentication functionality into separate API, schema, service, repository and security layers.
 
 ### 2.2 Password Security
 
@@ -64,6 +65,8 @@ Functionalities include:
 - Implemented automatic role assignment during user registration.
 - Verified the UserRole association in the database.
 - Preserved the existing identity database schema.
+
+**Migration ID:** `4a51514eb718`
 
 ### 2.5 User Login and Authentication
 
@@ -103,19 +106,24 @@ Authentication configuration:
 - Signing secret: Environment-based configuration
 - Token validation: Signature and expiration verification
 
-### 2.7 Backend Architecture
+### 2.7 Authenticated User Identity
 
-Established and expanded the modular backend structure:
+Implemented a reusable authentication dependency and the authenticated-user profile endpoint.
 
-- API layer
-- Schema layer
-- Service layer
-- Repository layer
-- Security utilities
-- Database models
-- Database migration management
+Functionalities include:
 
-The implementation separates HTTP handling, data validation, business logic and database operations.
+- Implemented a reusable JWT Bearer authentication dependency.
+- Integrated HTTP Authorization header extraction.
+- Implemented JWT signature and expiration validation.
+- Extracted the user identifier from the JWT subject claim.
+- Implemented authenticated-user retrieval from PostgreSQL.
+- Added active-account verification for protected requests.
+- Implemented the `GET /auth/me` endpoint.
+- Returned authenticated user profile information without exposing password hashes.
+- Rejected missing, malformed, invalid and expired tokens.
+- Rejected tokens referencing nonexistent or inactive accounts.
+
+**Integration Result:** Successfully retrieved the registered developer's profile through the live PostgreSQL-backed API using JWT authentication.
 
 ## 3. Technology Stack
 
@@ -132,7 +140,7 @@ The implementation separates HTTP handling, data validation, business logic and 
 | JWT Library | PyJWT |
 | Validation | Pydantic |
 | Email Validation | email-validator |
-| Testing Framework | Pytest |
+| Automated Testing | Pytest |
 | API Testing | FastAPI TestClient |
 | Code Quality | Ruff |
 | Containerization | Docker |
@@ -150,25 +158,48 @@ The following identity-related database tables are established:
 
 The default `developer` role has been provisioned through an Alembic migration.
 
-**Migration ID:** `4a51514eb718`
-
-The migration chain is maintained without modifying the original Sprint 1 identity migration.
+Database operations are managed using SQLAlchemy, while schema versioning is maintained through Alembic.
 
 ## 5. API Endpoints Implemented
 
 | Method | Endpoint | Functionality |
 |---|---|---|
-| POST | `/auth/register` | Register a new developer |
-| POST | `/auth/login` | Authenticate a registered user |
 | GET | `/` | API root information |
 | GET | `/health` | Backend health check |
 | GET | `/health/database` | Database connectivity check |
+| POST | `/auth/register` | Register a new developer |
+| POST | `/auth/login` | Authenticate a registered user |
+| GET | `/auth/me` | Retrieve authenticated user profile |
 
-## 6. Testing and Validation
+## 6. Backend Architecture
 
-Automated testing has been conducted using Pytest with an isolated SQLite database for registration and authentication integration tests.
+Sprint 2 follows a modular backend architecture with separated responsibilities.
 
-### 6.1 Authentication Tests
+| Layer | Responsibility |
+|---|---|
+| API Layer | Handles authentication HTTP requests and responses |
+| Schema Layer | Validates registration, login and response data |
+| Service Layer | Implements registration and authentication business logic |
+| Repository Layer | Performs user, role and database operations |
+| Security Layer | Handles Argon2 password hashing and JWT operations |
+| Database Layer | Manages PostgreSQL connections and SQLAlchemy sessions |
+
+### Authentication Request Workflow
+
+1. The developer submits registration or login information.
+2. FastAPI validates the incoming request.
+3. The service layer performs the authentication or registration operation.
+4. The repository layer interacts with PostgreSQL.
+5. Passwords are processed using Argon2id.
+6. JWT tokens are generated and verified through the security layer.
+7. Authenticated-user dependencies identify the corresponding database user.
+8. The API returns the appropriate response.
+
+## 7. Testing and Validation
+
+Automated testing has been conducted using Pytest with isolated SQLite databases for registration, authentication and current-user integration tests.
+
+### 7.1 Authentication Tests
 
 | Test Case | Result |
 |---|---|
@@ -179,7 +210,7 @@ Automated testing has been conducted using Pytest with an isolated SQLite databa
 | Inactive account rejection | Passed |
 | Expired JWT rejection | Passed |
 
-### 6.2 Registration Tests
+### 7.2 Registration Tests
 
 | Test Case | Result |
 |---|---|
@@ -190,7 +221,18 @@ Automated testing has been conducted using Pytest with an isolated SQLite databa
 | Short password rejection | Passed |
 | Automatic developer-role assignment | Passed |
 
-### 6.3 Password Security Tests
+### 7.3 Current-User Identity Tests
+
+| Test Case | Result |
+|---|---|
+| Valid JWT profile retrieval | Passed |
+| Missing token rejection | Passed |
+| Invalid token rejection | Passed |
+| Expired token rejection | Passed |
+| Unknown user rejection | Passed |
+| Inactive user rejection | Passed |
+
+### 7.4 Password Security Tests
 
 | Test Case | Result |
 |---|---|
@@ -199,29 +241,35 @@ Automated testing has been conducted using Pytest with an isolated SQLite databa
 | Incorrect password rejection | Passed |
 | Unique salt generation | Passed |
 
-### 6.4 Existing API Tests
+### 7.5 Existing API Tests
 
 - Root endpoint testing.
 - Backend health endpoint testing.
 
-### Overall Backend Test Results
+### 7.6 Overall Backend Test Results
 
-| Test Category | Passed |
+| Test Category | Tests Passed |
 |---|---:|
 | Authentication | 6 |
 | Registration | 6 |
+| Current-User Identity | 6 |
 | Password Security | 4 |
 | Existing API | 2 |
-| **Total** | **18/18** |
+| **Total** | **24/24** |
 
-### Code Quality Validation
+**Overall Result:** All 24 automated backend tests passed.
 
-- Targeted Ruff checks: All checks passed.
+### 7.7 Code Quality and Dependency Validation
+
+- Ruff validation: All checks passed for the targeted application, test and migration files.
 - Dependency validation: No broken requirements found.
-- JWT generation and signature verification: Passed.
-- Expired JWT rejection: Passed.
+- JWT generation: Passed.
+- JWT signature verification: Passed.
+- JWT expiration verification: Passed.
+- Inactive-account protection: Passed.
+- Live PostgreSQL user-profile integration: Passed.
 
-## 7. Security Measures Implemented
+## 8. Security Measures Implemented
 
 The following security measures have been implemented:
 
@@ -235,81 +283,93 @@ The following security measures have been implemented:
 8. Environment-based JWT signing secret.
 9. Restricted default developer-role assignment.
 10. Database transaction rollback on registration failure.
+11. Bearer token authentication.
+12. Authenticated-user verification through database lookup.
+13. Rejection of invalid and expired access tokens.
+14. Protection of user profile responses from password-hash exposure.
 
-## 8. Remaining Sprint Work
+## 9. Version Control and Project Management
+
+The DEVLOOP project is maintained using Git and GitHub.
+
+**Repository:** Jeff-ie-ee/DEVLOOP
+
+**GitHub:** https://github.com/Jeff-ie-ee/DEVLOOP
+
+The following commits have been published:
+
+| Commit | Description |
+|---|---|
+| `2799c32` | Complete Sprint 1 engineering foundation |
+| `53d15c1` | Add Sprint 1 weekly report |
+| `8eec2ca` | Implement secure user registration |
+| `18efb1a` | Implement JWT login authentication |
+
+The authenticated-user identity implementation has also been committed locally and is pending its GitHub push.
+
+## 10. Remaining Sprint Work
 
 The following functionalities remain to be implemented or validated:
 
-### 8.1 Authenticated User Identity
-- Implement `GET /auth/me`.
-- Extract authenticated user identity from JWT.
-- Validate user existence and active status.
+### 10.1 Protected API Access
 
-### 8.2 Protected API Access
-- Implement reusable authentication dependencies.
-- Protect selected API endpoints.
-- Reject requests without valid Bearer tokens.
+- Integrate JWT authentication dependencies into selected API routes.
+- Protect developer workspace resources.
+- Reject unauthorized requests.
+- Validate access using Bearer tokens.
 
-### 8.3 Role-Based Access Control
+### 10.2 Role-Based Access Control
+
 - Define platform roles and permissions.
 - Implement role-checking dependencies.
 - Restrict administrative operations.
-- Validate unauthorized access rejection.
+- Validate developer and administrator permissions.
 
-### 8.4 Session Management
+### 10.3 Session Management
+
 - Implement refresh-token functionality.
 - Implement token revocation and session management.
 - Integrate secure logout behaviour.
 
-### 8.5 Frontend Authentication
+### 10.4 Frontend Authentication
+
 - Develop login and registration interfaces.
 - Integrate authentication APIs with React.
 - Implement authentication state management.
 - Add protected workspace navigation.
 - Integrate logout functionality.
 
-### 8.6 Final Integration
+### 10.5 Final Integration
+
 - Conduct backend and frontend integration testing.
 - Validate authorization workflows.
 - Complete automated security testing.
 - Update technical documentation.
 - Complete the Sprint 2 review and final GitHub synchronization.
 
-## 9. Version Control and Project Management
+## 11. Sprint Outcome
 
-The Sprint 1 foundation and Sprint 2 registration implementation have been committed and pushed to GitHub.
+Sprint 2 has successfully established the core identity registration, login authentication and authenticated-user identification functionality of DEVLOOP.
 
-**Repository:** Jeff-ie-ee/DEVLOOP
+The system supports secure account registration, Argon2id password hashing, username/email authentication, JWT access-token generation, active-account verification and authenticated-user profile retrieval.
 
-**GitHub:** https://github.com/Jeff-ie-ee/DEVLOOP
+The backend now includes three principal authentication endpoints:
 
-Recorded commits:
+- `POST /auth/register`
+- `POST /auth/login`
+- `GET /auth/me`
 
-| Commit | Description |
-|---|---|
-| `2799c32` | Sprint 1 engineering foundation |
-| `53d15c1` | Sprint 1 weekly report |
-| `8eec2ca` | Sprint 2 secure user registration |
+The implementation has been validated through 24 automated backend tests, with all tests passing.
 
-The login and JWT authentication implementation is undergoing final development validation and has not yet been committed.
+The completed work establishes a foundation for protected API access, role-based authorization and frontend authentication integration.
 
-## 10. Sprint Outcome
+## 12. Conclusion
 
-Sprint 2 has successfully established the core identity registration and login functionality of DEVLOOP.
+Sprint 2 has made significant progress towards establishing a secure and structured Identity and Access Management system for DEVLOOP.
 
-The system now supports secure account registration, Argon2id password hashing, username/email authentication, JWT access-token generation and inactive-account restrictions.
+The registration, login and authenticated-user identity functionalities provide the foundation for identifying developers and controlling access to platform resources.
 
-The backend registration and authentication workflows have been validated through 18 automated tests.
-
-The project has established a foundation for implementing protected API access, identity verification and role-based authorization.
-
-## 11. Conclusion
-
-Sprint 2 has made significant progress towards establishing a secure and structured identity management system for DEVLOOP.
-
-The completed registration and authentication functionalities provide the foundation for controlling access to the platform and supporting individual developer accounts.
-
-The remaining work will focus on authenticated-user verification, protected API endpoints, role-based authorization, session management and frontend integration.
+The next development stage will focus on protected API endpoints, role-based authorization, session management and frontend integration.
 
 **Sprint 2 Status: IN PROGRESS**
 
