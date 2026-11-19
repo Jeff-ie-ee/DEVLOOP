@@ -3,6 +3,7 @@ from typing import Annotated
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.dependencies import CurrentUser
 from app.core.security import create_access_token
 from app.models.user import User
 from app.schemas.auth import (
@@ -90,3 +91,14 @@ def login(
         token_type="bearer",
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
+@router.get(
+    "/me",
+    response_model=UserRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_my_profile(
+    current_user: CurrentUser,
+) -> User:
+    """Return the authenticated developer's profile."""
+
+    return current_user
