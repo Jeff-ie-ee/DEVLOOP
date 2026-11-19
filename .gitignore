@@ -50,3 +50,6 @@ frontend/dist/
 # Temporary files
 *.tmp
 *.bak
+
+# Unused nested Vite starter project
+/frontend/frontend/
