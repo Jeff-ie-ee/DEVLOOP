@@ -1,5 +1,5 @@
 
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.models.user import User
 from app.repositories.user_repository import (
     create_user,
@@ -21,30 +21,31 @@ class DeveloperRoleUnavailableError(Exception):
     """Raised when the default developer role is unavailable."""
 
 
+class InvalidCredentialsError(Exception):
+    """Raised when login credentials are invalid."""
+
+
 def register_user(db: Session, registration: UserRegister) -> User:
     """
     Register a new DEVLOOP user.
 
-    The operation creates the user and assigns the default developer
-    role within one database transaction.
+    Creates the user and assigns the default developer role
+    within one database transaction.
     """
 
     username = registration.username.strip()
     email = str(registration.email).strip().lower()
 
-    # Check for an existing email.
     if get_user_by_email(db, email):
         raise UserAlreadyExistsError(
             "An account with this email already exists."
         )
 
-    # Check for an existing username.
     if get_user_by_username(db, username):
         raise UserAlreadyExistsError(
             "This username is already taken."
         )
 
-    # Obtain the default role.
     developer_role = get_role_by_name(db, "developer")
 
     if developer_role is None:
@@ -52,7 +53,6 @@ def register_user(db: Session, registration: UserRegister) -> User:
             "The default developer role has not been configured."
         )
 
-    # Prepare the user record.
     user = User(
         username=username,
         email=email,
@@ -61,7 +61,6 @@ def register_user(db: Session, registration: UserRegister) -> User:
     )
 
     try:
-        # Insert user and assign role in the same transaction.
         user = create_user(db, user)
 
         create_user_role(
@@ -78,7 +77,6 @@ def register_user(db: Session, registration: UserRegister) -> User:
     except IntegrityError as exc:
         db.rollback()
 
-        # Handle concurrent registration attempts safely.
         if (
             get_user_by_email(db, email)
             or get_user_by_username(db, username)
@@ -92,3 +90,39 @@ def register_user(db: Session, registration: UserRegister) -> User:
     except Exception:
         db.rollback()
         raise
+
+
+def authenticate_user(
+    db: Session,
+    identifier: str,
+    password: str,
+) -> User:
+    """
+    Authenticate an existing DEVLOOP user using username or email.
+
+    Inactive accounts and invalid credentials are rejected.
+    """
+
+    identifier = identifier.strip()
+
+    if "@" in identifier:
+        user = get_user_by_email(db, identifier.lower())
+    else:
+        user = get_user_by_username(db, identifier)
+
+    if user is None:
+        raise InvalidCredentialsError(
+            "Invalid username/email or password."
+        )
+
+    if not verify_password(password, user.password_hash):
+        raise InvalidCredentialsError(
+            "Invalid username/email or password."
+        )
+
+    if not user.is_active:
+        raise InvalidCredentialsError(
+            "Invalid username/email or password."
+        )
+
+    return user

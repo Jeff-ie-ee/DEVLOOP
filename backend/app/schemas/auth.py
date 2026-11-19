@@ -1,6 +1,7 @@
 
 import re
 from datetime import datetime
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -55,3 +56,40 @@ class UserRead(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class LoginRequest(BaseModel):
+    """Credentials submitted during login."""
+
+    identifier: str = Field(
+        min_length=3,
+        max_length=255,
+        description="Registered username or email address.",
+    )
+
+    password: str = Field(
+        min_length=1,
+        max_length=128,
+    )
+
+    @field_validator("identifier")
+    @classmethod
+    def normalize_identifier(cls, value: str) -> str:
+        value = value.strip()
+
+        if not value:
+            raise ValueError("Username or email is required.")
+
+        return value
+
+
+class TokenResponse(BaseModel):
+    """JWT access token returned after successful login."""
+
+    access_token: str
+
+    token_type: Literal["bearer"] = "bearer"
+
+    expires_in: int = Field(
+        description="Token lifetime in seconds.",
+    )
