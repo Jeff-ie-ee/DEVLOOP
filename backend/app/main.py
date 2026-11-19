@@ -1,6 +1,8 @@
-﻿from fastapi import FastAPI
+﻿
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import router as auth_router
 from app.core.config import settings
 from app.core.db_check import check_database_connection
 
@@ -11,6 +13,8 @@ app = FastAPI(
     debug=settings.DEBUG,
 )
 
+
+# Frontend cross-origin configuration.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -24,6 +28,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Register authentication routes.
+app.include_router(auth_router)
+
+
 @app.get("/")
 def root():
     return {
@@ -32,6 +41,7 @@ def root():
         "version": settings.APP_VERSION,
     }
 
+
 @app.get("/health")
 def health_check():
     return {
@@ -39,9 +49,11 @@ def health_check():
         "service": settings.APP_NAME,
     }
 
+
 @app.get("/health/database")
 def database_health():
     connected = check_database_connection()
+
     return {
         "status": "connected" if connected else "disconnected",
         "database": "PostgreSQL",

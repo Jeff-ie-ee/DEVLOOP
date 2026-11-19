@@ -7,9 +7,9 @@ from alembic import context
 BASE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE_DIR / "backend"))
 
+import app.models  # noqa: F401
 from app.core.config import settings
 from app.core.database import Base, engine
-import app.models
 
 config = context.config
 

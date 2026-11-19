@@ -1,12 +1,18 @@
-﻿from sqlalchemy import text
+﻿
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import engine
 
 
 def check_database_connection() -> bool:
+    """Check whether PostgreSQL accepts a database query."""
+
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
+
         return True
-    except Exception:
+
+    except SQLAlchemyError:
         return False
