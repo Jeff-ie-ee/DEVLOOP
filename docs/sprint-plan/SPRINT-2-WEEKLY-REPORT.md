@@ -1,11 +1,11 @@
 # DEVLOOP – SPRINT 2 WEEKLY REPORT
 
-**Project Title:** Developer Engineering & Intelligence Platform (DEVLOOP)
-**Project Tagline:** Learn. Research. Build. Evolve.
-**Sprint:** Sprint 2 – Identity and Access Management
-**Planned Duration:** 7 Working Days
-**Reporting Date:** 20 November 2026
-**Development Methodology:** Agile – Scrum
+**Project Title:** Developer Engineering & Intelligence Platform (DEVLOOP)\
+**Project Tagline:** Learn. Research. Build. Evolve.\
+**Sprint:** Sprint 2 – Identity and Access Management\
+**Planned Duration:** 7 Working Days\
+**Reporting Date:** 20 November 2026\
+**Development Methodology:** Agile – Scrum\
 **Sprint Status:** IN PROGRESS
 
 ---
@@ -16,7 +16,7 @@ Sprint 2 focuses on developing a secure and structured Identity and Access Manag
 
 The primary goal is to establish a reliable authentication and authorization framework that enables developers to register, log in, access their accounts and interact with platform resources according to their assigned roles.
 
-The sprint introduces secure password management, JSON Web Token (JWT) authentication, authenticated-user identification, Role-Based Access Control (RBAC) and session management.
+The sprint introduces secure password management, JSON Web Token (JWT) authentication, authenticated-user identification, Role-Based Access Control (RBAC), refresh-token management and session-bound access-token validation.
 
 These functionalities provide the security foundation for subsequent DEVLOOP modules, including the coding workspace, project management, code execution and developer analytics.
 
@@ -35,7 +35,9 @@ The major objectives of Sprint 2 are:
 9. Protect administrative API endpoints.
 10. Implement secure refresh-token management.
 11. Introduce refresh-token rotation and session revocation.
-12. Validate authentication and authorization through automated and live integration testing.
+12. Implement session-bound access-token validation.
+13. Support immediate access-token invalidation after session revocation.
+14. Validate authentication and authorization through automated and live integration testing.
 
 # 3. WORK COMPLETED
 
@@ -125,6 +127,7 @@ The JWT contains the following claims:
 | Claim | Description |
 |---|---|
 | `sub` | Unique database user identifier |
+| `sid` | Refresh-session family identifier |
 | `iat` | Token issue time |
 | `exp` | Token expiration time |
 
@@ -136,8 +139,9 @@ The JWT contains the following claims:
 | Access Token Lifetime | 30 minutes |
 | Signing Secret | Environment-based configuration |
 | Token Generation | PyJWT |
-| Token Validation | Signature and expiration verification |
+| Token Validation | Signature, expiration and required-claim verification |
 | Authentication Scheme | Bearer |
+| Session Binding | Refresh-session family identifier |
 
 ## 3.7 Authenticated User Identity
 
@@ -148,12 +152,15 @@ Work completed:
 - Implemented HTTP Authorization header extraction.
 - Implemented JWT signature and expiration validation.
 - Extracted the user identifier from the JWT subject claim.
+- Extracted the session identifier from the JWT.
 - Implemented authenticated-user retrieval from PostgreSQL.
 - Added active-account verification for protected requests.
+- Added active refresh-session verification for session-bound access tokens.
 - Implemented the `GET /auth/me` endpoint.
 - Returned authenticated user profile information without exposing password hashes.
 - Rejected missing, malformed, invalid and expired tokens.
 - Rejected tokens referencing nonexistent or inactive accounts.
+- Rejected access tokens belonging to revoked or inactive sessions.
 
 **API Endpoint:** `GET /auth/me`
 
@@ -324,6 +331,7 @@ Work completed:
 - Implemented refresh-token reuse detection.
 - Implemented session-family revocation.
 - Implemented refresh-token expiration validation.
+- Implemented active-session verification.
 - Implemented rejection of inactive or unavailable user accounts.
 
 The session service ensures that the raw refresh token is not stored directly in the database.
@@ -337,7 +345,7 @@ Integrated refresh-session management into the existing authentication API.
 Implemented:
 
 - User authentication.
-- Access-token generation.
+- Session-bound access-token generation.
 - Refresh-token session creation.
 - Storage of the refresh-token hash in PostgreSQL.
 - HTTP-only refresh-token cookie delivery.
@@ -353,7 +361,7 @@ Implemented:
 - Refresh-token rotation.
 - Previous-token revocation.
 - Replacement-token creation.
-- New access-token generation.
+- New session-bound access-token generation.
 - Replacement HTTP-only cookie delivery.
 - Refresh-token reuse detection and session-family revocation.
 
@@ -366,6 +374,29 @@ Implemented:
 - Session-family revocation.
 - Refresh-cookie deletion.
 - Successful logout response.
+
+## 3.16 Session-Bound JWT Validation and Immediate Revocation
+
+Implemented additional access-token security hardening.
+
+Work completed:
+
+- Added the refresh-session family identifier (`sid`) to access JWTs.
+- Updated JWT generation to require a session identifier.
+- Updated JWT decoding to validate the required session claim.
+- Extended the authentication dependency to verify that the corresponding refresh-session family remains active.
+- Implemented active-session verification through the session-management service.
+- Ensured that logout revokes the refresh-session family.
+- Ensured that refresh-token reuse detection revokes the associated session family.
+- Rejected previously issued access tokens when their associated session family is revoked.
+
+This implementation addresses the limitation of purely stateless access JWTs, which otherwise remain valid until expiration even after refresh-session revocation.
+
+**Verified security scenarios:**
+
+1. An access token successfully accesses the authenticated-user endpoint before logout.
+2. After logout, the same access token is rejected.
+3. An access token is rejected after refresh-token reuse triggers session-family revocation.
 
 **Refresh Token Configuration:**
 
@@ -380,10 +411,10 @@ Implemented:
 | Token Rotation | Implemented |
 | Reuse Detection | Implemented |
 | Session Revocation | Implemented |
+| Session-Bound Access JWT | Implemented |
+| Immediate Access-Token Invalidation | Implemented |
 
 The Secure cookie setting is disabled only for local HTTP development. Production deployment requires HTTPS, secure cookies and appropriate CSRF protection.
-
-**Important Security Limitation:** Refresh-session revocation does not immediately invalidate previously issued stateless access JWTs. Such access tokens may remain valid until their expiration unless additional server-side access-token revocation or session validation is implemented.
 
 # 4. TECHNOLOGY STACK
 
@@ -472,22 +503,23 @@ Sprint 2 follows a modular backend architecture with clear separation of respons
 3. The service layer performs the required operation.
 4. The repository layer interacts with PostgreSQL.
 5. Argon2 verifies or hashes passwords.
-6. A signed JWT is generated after successful authentication.
+6. A signed, session-bound JWT is generated after successful authentication.
 7. A refresh-token session is created and stored in PostgreSQL.
 8. The raw refresh token is delivered through an HTTP-only cookie.
-9. Authenticated-user dependencies validate the access token.
-10. The corresponding user is retrieved from PostgreSQL.
+9. Authenticated-user dependencies validate the access token and its session identifier.
+10. The corresponding user and active session are verified.
 11. The API returns the appropriate response.
 
 ### Authorization Workflow
 
 1. A user sends a request to a protected API endpoint.
 2. FastAPI extracts the Bearer token.
-3. The JWT is validated.
+3. The JWT signature, expiration and required claims are validated.
 4. The user is retrieved from PostgreSQL.
-5. The user's assigned roles are checked.
-6. The requested operation is permitted or rejected.
-7. Unauthorized users receive HTTP 401 or HTTP 403, as appropriate.
+5. The user's active account and refresh-session family are checked.
+6. The user's assigned roles are checked.
+7. The requested operation is permitted or rejected.
+8. Unauthorized users receive HTTP 401 or HTTP 403, as appropriate.
 
 ### Refresh Token Workflow
 
@@ -500,7 +532,15 @@ Sprint 2 follows a modular backend architecture with clear separation of respons
 7. A replacement refresh token is generated within the same token family.
 8. The previous refresh-token record is revoked.
 9. The replacement token is stored as a hash.
-10. A new access token and HTTP-only refresh cookie are returned.
+10. A new session-bound access token and HTTP-only refresh cookie are returned.
+
+### Session Revocation Workflow
+
+1. A user logs out or refresh-token reuse is detected.
+2. The corresponding refresh-token family is revoked.
+3. The authentication dependency checks the session family on protected requests.
+4. The revoked session is identified as inactive.
+5. Previously issued access tokens associated with that session are rejected.
 
 # 8. TESTING AND VALIDATION
 
@@ -590,8 +630,10 @@ Isolated SQLite databases were used for registration, authentication, identity, 
 | Missing refresh-cookie rejection | Passed |
 | Logout revokes session | Passed |
 | Refresh after logout rejected | Passed |
+| Logout immediately invalidates access token | Passed |
+| Refresh-token reuse immediately invalidates access token | Passed |
 
-**Result: 7/7 Passed**
+**Result: 9/9 Passed**
 
 ## 8.8 Overall Backend Testing Results
 
@@ -603,10 +645,12 @@ Isolated SQLite databases were used for registration, authentication, identity, 
 | Password Security | 4 |
 | Existing API | 2 |
 | Role-Based Access Control | 5 |
-| Session Management | 7 |
-| **TOTAL** | **36/36** |
+| Session Management | 9 |
+| **TOTAL** | **38/38** |
 
-**Overall Result: All 36 automated backend tests passed.**
+**Overall Result: All 38 automated backend tests passed.**
+
+The complete test suite finished in **4.01 seconds**.
 
 ## 8.9 Live RBAC Integration Testing
 
@@ -635,7 +679,7 @@ The following validation results were obtained:
 
 | Validation | Result |
 |---|---|
-| Full backend automated test suite | 36 passed |
+| Full backend automated test suite | 38 passed |
 | Ruff application and test validation | All checks passed |
 | Dependency validation | No broken requirements found |
 | Refresh-token model import | Passed |
@@ -645,8 +689,10 @@ The following validation results were obtained:
 | PostgreSQL refresh-token table verification | Passed |
 | Live PostgreSQL administrator access | Passed |
 | Live PostgreSQL developer restriction | Passed |
+| Git whitespace validation | Passed |
+| Git working-tree validation | Clean |
 
-**Final Automated Validation:** 36/36 tests passed, Ruff checks passed and no broken Python requirements were found.
+**Final Automated Validation:** 38/38 tests passed, Ruff checks passed and no broken Python requirements were found.
 
 # 9. SECURITY MEASURES IMPLEMENTED
 
@@ -677,17 +723,20 @@ The following security measures have been implemented:
 23. Refresh-token reuse detection.
 24. Session-family revocation.
 25. Refresh-cookie deletion during logout.
+26. Session identifier binding in access JWTs.
+27. Active-session validation for protected requests.
+28. Immediate access-token invalidation following session revocation.
 
-Additional production security work remains, including immediate access-token invalidation, CSRF protection for cookie-based session endpoints and secure HTTPS cookie configuration.
+Additional production security work remains, including CSRF protection for cookie-based session endpoints, HTTPS deployment, secure production cookie configuration and review of refresh-token concurrency behavior.
 
 # 10. VERSION CONTROL AND PROJECT MANAGEMENT
 
 The DEVLOOP project is maintained using Git and GitHub.
 
-**GitHub Repository:**
+**GitHub Repository:**\
 https://github.com/Jeff-ie-ee/DEVLOOP
 
-### Previously Published Commits
+### Published Commits
 
 | Commit | Description |
 |---|---|
@@ -698,23 +747,28 @@ https://github.com/Jeff-ie-ee/DEVLOOP
 | `1d50e0e` | Implement authenticated user identity |
 | `7382218` | Update Sprint 2 progress report |
 | `34f9ac2` | Implement Role-Based Access Control |
+| `e53e7eb` | Implement refresh-token session management |
+| `f50daff` | Implement immediate session-bound JWT revocation |
 
-The refresh-token model, database migration, session service, authentication API integration and session-management tests have passed local validation.
+**Latest Commit:** `f50daff`
 
-These latest session-management changes and their updated documentation are pending GitHub synchronization.
+**Commit Message:** `feat: implement immediate session-bound JWT revocation`
+
+The latest security implementation has been committed and pushed to GitHub.
+
+The local repository is synchronized with the remote `master` branch, and the working tree is clean.
 
 # 11. REMAINING SPRINT WORK
 
 The following functionalities remain planned for completion.
 
-## 11.1 Access-Token Security Hardening
+## 11.1 Production Security Hardening
 
-- Implement immediate access-token revocation or server-side session validation.
-- Validate the session status for protected requests where required.
-- Test access-token invalidation following logout.
-- Review refresh-token concurrency and reuse scenarios.
-- Implement CSRF protection for cookie-based authentication.
+- Implement CSRF protection for cookie-based authentication endpoints.
 - Configure HTTPS and secure cookies for production.
+- Review refresh-token concurrency and database locking behavior.
+- Review session-management edge cases.
+- Validate production environment-variable configuration.
 
 ## 11.2 Protected Developer APIs
 
@@ -749,7 +803,7 @@ The following functionalities remain planned for completion.
 - Perform final code-quality and dependency checks.
 - Update technical documentation.
 - Complete the Sprint 2 review.
-- Synchronize the final Sprint 2 implementation with GitHub.
+- Synchronize the final Sprint 2 implementation and report with GitHub.
 
 # 12. SPRINT OUTCOME
 
@@ -761,7 +815,11 @@ Two platform roles, developer and administrator, have been provisioned. Administ
 
 Session management has also been introduced through refresh-token generation, SHA-256 token hashing, HTTP-only cookie delivery, token rotation, reuse detection and session revocation.
 
-The implementation has been validated through 36 automated backend tests, all of which passed. Ruff validation and Python dependency checks also completed successfully.
+An additional security improvement binds access JWTs to refresh-session families. Protected requests now verify that the associated session remains active. This allows previously issued access tokens to be rejected immediately after logout or refresh-token reuse triggers session-family revocation.
+
+The implementation has been validated through **38 automated backend tests**, all of which passed in 4.01 seconds. Ruff validation and Python dependency checks also completed successfully.
+
+The latest implementation has been committed and synchronized with GitHub under commit `f50daff`.
 
 The completed work establishes the security and identity foundation required for the forthcoming developer workspace and engineering productivity modules.
 
@@ -771,13 +829,15 @@ Sprint 2 has made substantial progress towards establishing a secure and structu
 
 The registration, authentication, identity verification, authorization and session-management functionalities provide the foundation for identifying developers and controlling access to platform resources.
 
-The backend supports separate developer and administrator roles, protected administrative operations, refresh-token rotation and session revocation.
+The backend supports separate developer and administrator roles, protected administrative operations, refresh-token rotation, session revocation and immediate invalidation of access tokens associated with revoked sessions.
 
-The next development stage will focus on access-token security hardening, frontend authentication, protected workspace integration and final system validation.
+All 38 automated backend tests passed. Ruff validation, dependency checks and Git synchronization were also successfully completed.
+
+The next development stage will focus on production security hardening, frontend authentication, protected workspace integration and final system validation.
 
 **Sprint 2 Status: IN PROGRESS**
 
 ---
 
-**Project:** DEVLOOP
+**Project:** DEVLOOP\
 **Project Tagline:** Learn. Research. Build. Evolve.
