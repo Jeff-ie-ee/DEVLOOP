@@ -65,3 +65,40 @@ def create_role(
     db.refresh(role)
 
     return role
+
+def user_has_role(
+    db: Session,
+    user_id: int,
+    role_name: str,
+) -> bool:
+    """Check whether a user has a specific assigned role."""
+
+    statement = (
+        select(Role.id)
+        .join(
+            UserRole,
+            UserRole.role_id == Role.id,
+        )
+        .where(
+            UserRole.user_id == user_id,
+            Role.name == role_name,
+        )
+    )
+
+    return db.scalar(statement) is not None
+
+def list_users(
+    db: Session,
+    offset: int = 0,
+    limit: int = 20,
+) -> list[User]:
+    """Retrieve registered users with pagination."""
+
+    statement = (
+        select(User)
+        .order_by(User.id)
+        .offset(offset)
+        .limit(limit)
+    )
+
+    return list(db.scalars(statement).all())
