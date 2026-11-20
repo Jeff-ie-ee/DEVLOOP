@@ -1,17 +1,15 @@
-
-import pytest
+﻿import pytest
 from app.core.database import Base, get_db
 from app.core.security import create_access_token
 from app.main import app
 from app.models.role import Role
 from app.models.user import User
 from app.models.user_role import UserRole
+from app.services.session_service import create_refresh_session
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-TEST_PASSWORD = "DEVLOOP-RBAC-Test-2026!"
 
 
 @pytest.fixture
@@ -74,8 +72,8 @@ def create_test_user(
     db_session,
     role_name: str,
     is_active: bool = True,
-) -> User:
-    """Create a test user and assign the specified role."""
+) -> tuple[User, str]:
+    """Create a test user with a role and active refresh session."""
 
     role = db_session.scalar(
         select(Role).where(Role.name == role_name)
@@ -99,19 +97,36 @@ def create_test_user(
     )
 
     db_session.add(assignment)
+    db_session.flush()
+
+    _, session_id = create_refresh_session(
+        db_session,
+        user.id,
+    )
+
     db_session.commit()
     db_session.refresh(user)
 
-    return user
+    return user, session_id
 
 
 def test_admin_can_list_users(client, db_session):
     """An administrator can retrieve registered user profiles."""
 
-    admin = create_test_user(db_session, "admin")
-    developer = create_test_user(db_session, "developer")
+    admin, session_id = create_test_user(
+        db_session,
+        "admin",
+    )
 
-    token = create_access_token(str(admin.id))
+    developer, _ = create_test_user(
+        db_session,
+        "developer",
+    )
+
+    token = create_access_token(
+        subject=str(admin.id),
+        session_id=session_id,
+    )
 
     response = client.get(
         "/admin/users",
@@ -142,12 +157,15 @@ def test_developer_cannot_access_admin_endpoint(
 ):
     """A developer must receive HTTP 403."""
 
-    developer = create_test_user(
+    developer, session_id = create_test_user(
         db_session,
         "developer",
     )
 
-    token = create_access_token(str(developer.id))
+    token = create_access_token(
+        subject=str(developer.id),
+        session_id=session_id,
+    )
 
     response = client.get(
         "/admin/users",
@@ -173,13 +191,16 @@ def test_missing_token_rejected(client):
 def test_inactive_admin_rejected(client, db_session):
     """An inactive administrator must receive HTTP 401."""
 
-    admin = create_test_user(
+    admin, session_id = create_test_user(
         db_session,
         "admin",
         is_active=False,
     )
 
-    token = create_access_token(str(admin.id))
+    token = create_access_token(
+        subject=str(admin.id),
+        session_id=session_id,
+    )
 
     response = client.get(
         "/admin/users",

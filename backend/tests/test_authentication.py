@@ -179,6 +179,7 @@ def test_expired_jwt_rejected():
 
     expired_token = create_access_token(
         subject="1",
+        session_id="test-session",
         expires_delta=timedelta(seconds=-1),
     )
 

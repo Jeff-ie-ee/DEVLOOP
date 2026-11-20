@@ -1,10 +1,12 @@
-﻿from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from app.core.config import settings
 from app.core.database import Base, get_db
-from app.core.security import hash_password
+from app.core.security import (
+    hash_password,
+)
 from app.main import app
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
@@ -346,3 +348,102 @@ def test_refresh_after_logout_rejected(client, db_session):
     response = client.post("/auth/refresh")
 
     assert response.status_code == 401
+
+def test_logout_immediately_invalidates_access_token(
+    client,
+    db_session,
+):
+    """Logout immediately invalidates its associated access JWT."""
+
+    _, login_response = login_user(client, db_session)
+
+    access_token = login_response.json()["access_token"]
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+    }
+
+    # The access token should work before logout.
+    before_logout = client.get(
+        "/auth/me",
+        headers=headers,
+    )
+
+    assert before_logout.status_code == 200
+
+    # Revoke the refresh-token family.
+    logout_response = client.post("/auth/logout")
+
+    assert logout_response.status_code == 200
+
+    # The previously issued access token must now be rejected.
+    after_logout = client.get(
+        "/auth/me",
+        headers=headers,
+    )
+
+    assert after_logout.status_code == 401
+
+
+def test_reuse_immediately_invalidates_access_tokens(
+    client,
+    db_session,
+):
+    """Refresh-token reuse invalidates all access JWTs in its family."""
+
+    _, login_response = login_user(client, db_session)
+
+    original_access_token = login_response.json()["access_token"]
+    old_refresh_token = login_response.cookies.get(COOKIE_NAME)
+
+    # Confirm the original access token is initially valid.
+    original_check = client.get(
+        "/auth/me",
+        headers={
+            "Authorization": f"Bearer {original_access_token}",
+        },
+    )
+
+    assert original_check.status_code == 200
+
+    # Rotate the refresh token and obtain another access JWT.
+    rotation_response = client.post("/auth/refresh")
+
+    assert rotation_response.status_code == 200
+
+    rotated_access_token = rotation_response.json()["access_token"]
+
+    rotated_check = client.get(
+        "/auth/me",
+        headers={
+            "Authorization": f"Bearer {rotated_access_token}",
+        },
+    )
+
+    assert rotated_check.status_code == 200
+
+    # Simulate replay of the previously consumed refresh token.
+    client.cookies.set(
+        COOKIE_NAME,
+        old_refresh_token,
+        domain="testserver.local",
+        path="/auth",
+    )
+
+    replay_response = client.post("/auth/refresh")
+
+    assert replay_response.status_code == 401
+
+    # Both access JWTs belong to the revoked session family.
+    for access_token in (
+        original_access_token,
+        rotated_access_token,
+    ):
+        response = client.get(
+            "/auth/me",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+            },
+        )
+
+        assert response.status_code == 401

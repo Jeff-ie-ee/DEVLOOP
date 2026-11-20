@@ -1,11 +1,11 @@
-
-from datetime import timedelta
+﻿from datetime import timedelta
 
 import pytest
 from app.core.database import Base, get_db
 from app.core.security import create_access_token
 from app.main import app
 from app.models.user import User
+from app.services.session_service import create_refresh_session
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -55,7 +55,7 @@ def client(db_session):
 
 
 def create_test_user(db_session, is_active=True):
-    """Create a test developer account."""
+    """Create a developer account and an active refresh session."""
 
     user = User(
         username="identity_developer",
@@ -68,15 +68,25 @@ def create_test_user(db_session, is_active=True):
     db_session.commit()
     db_session.refresh(user)
 
-    return user
+    _, session_id = create_refresh_session(
+        db_session,
+        user.id,
+    )
+
+    db_session.commit()
+
+    return user, session_id
 
 
 def test_authenticated_user_profile(client, db_session):
-    """A valid JWT should return the authenticated user's profile."""
+    """A valid session-bound JWT returns the user profile."""
 
-    user = create_test_user(db_session)
+    user, session_id = create_test_user(db_session)
 
-    token = create_access_token(str(user.id))
+    token = create_access_token(
+        subject=str(user.id),
+        session_id=session_id,
+    )
 
     response = client.get(
         "/auth/me",
@@ -97,7 +107,7 @@ def test_authenticated_user_profile(client, db_session):
 
 
 def test_missing_token_rejected(client):
-    """Requests without an Authorization header must be rejected."""
+    """Requests without an Authorization header are rejected."""
 
     response = client.get("/auth/me")
 
@@ -106,7 +116,7 @@ def test_missing_token_rejected(client):
 
 
 def test_invalid_token_rejected(client):
-    """Malformed JWT tokens must be rejected."""
+    """Malformed JWT tokens are rejected."""
 
     response = client.get(
         "/auth/me",
@@ -117,12 +127,13 @@ def test_invalid_token_rejected(client):
 
 
 def test_expired_token_rejected(client, db_session):
-    """Expired access tokens must not provide account access."""
+    """Expired access tokens cannot access protected endpoints."""
 
-    user = create_test_user(db_session)
+    user, session_id = create_test_user(db_session)
 
     token = create_access_token(
-        str(user.id),
+        subject=str(user.id),
+        session_id=session_id,
         expires_delta=timedelta(seconds=-1),
     )
 
@@ -135,9 +146,12 @@ def test_expired_token_rejected(client, db_session):
 
 
 def test_unknown_user_rejected(client):
-    """A valid JWT referencing a nonexistent user must be rejected."""
+    """A JWT referencing a nonexistent user is rejected."""
 
-    token = create_access_token("999999")
+    token = create_access_token(
+        subject="999999",
+        session_id="nonexistent-session",
+    )
 
     response = client.get(
         "/auth/me",
@@ -148,14 +162,17 @@ def test_unknown_user_rejected(client):
 
 
 def test_inactive_user_rejected(client, db_session):
-    """An inactive account must not access protected endpoints."""
+    """An inactive account cannot access protected endpoints."""
 
-    user = create_test_user(
+    user, session_id = create_test_user(
         db_session,
         is_active=False,
     )
 
-    token = create_access_token(str(user.id))
+    token = create_access_token(
+        subject=str(user.id),
+        session_id=session_id,
+    )
 
     response = client.get(
         "/auth/me",

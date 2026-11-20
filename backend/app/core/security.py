@@ -30,12 +30,11 @@ def verify_password(
 
 def create_access_token(
     subject: str,
+    session_id: str,
     expires_delta: timedelta | None = None,
 ) -> str:
     """
-    Create a signed JWT access token.
-
-    The subject is the unique database user ID.
+    Create a signed JWT access token bound to a session family.
     """
 
     now = datetime.now(UTC)
@@ -49,25 +48,23 @@ def create_access_token(
 
     payload = {
         "sub": subject,
+        "sid": session_id,
         "iat": now,
         "exp": expire,
     }
 
-    token = jwt.encode(
+    return jwt.encode(
         payload,
         settings.JWT_SECRET_KEY.get_secret_value(),
         algorithm=settings.JWT_ALGORITHM,
     )
-
-    return token
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
     """
     Decode and verify a JWT access token.
 
-    Invalid signatures, expired tokens and missing required
-    claims raise InvalidTokenError.
+    Requires subject, session ID, issue time and expiration.
     """
 
     payload = jwt.decode(
@@ -75,13 +72,17 @@ def decode_access_token(token: str) -> dict[str, Any]:
         settings.JWT_SECRET_KEY.get_secret_value(),
         algorithms=[settings.JWT_ALGORITHM],
         options={
-            "require": ["sub", "iat", "exp"],
+            "require": ["sub", "sid", "iat", "exp"],
         },
     )
 
     subject = payload.get("sub")
+    session_id = payload.get("sid")
 
     if not isinstance(subject, str) or not subject:
         raise InvalidTokenError("Invalid token subject.")
+
+    if not isinstance(session_id, str) or not session_id:
+        raise InvalidTokenError("Invalid token session ID.")
 
     return payload

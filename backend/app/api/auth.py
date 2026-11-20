@@ -61,7 +61,9 @@ def set_refresh_cookie(
     )
 
 
-def clear_refresh_cookie(response: Response) -> None:
+def clear_refresh_cookie(
+    response: Response,
+) -> None:
     """Remove the refresh-token cookie from the browser."""
 
     response.delete_cookie(
@@ -126,21 +128,24 @@ def login(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    # Create the refresh-token session in PostgreSQL.
-    refresh_token = create_refresh_session(
+    # Create the refresh session.
+    refresh_token, session_id = create_refresh_session(
         db=db,
         user_id=user.id,
     )
 
-    # Persist the refresh-token record.
     db.commit()
 
-    # Store the raw refresh token only in an HTTP-only cookie.
-    set_refresh_cookie(response, refresh_token)
+    # Store the refresh token in an HTTP-only cookie.
+    set_refresh_cookie(
+        response,
+        refresh_token,
+    )
 
-    # Return the short-lived access token in the response body.
+    # Bind the JWT to the refresh-token session family.
     access_token = create_access_token(
         subject=str(user.id),
+        session_id=session_id,
     )
 
     return TokenResponse(
@@ -174,9 +179,11 @@ def refresh_access_token(
         )
 
     try:
-        user, new_refresh_token = rotate_refresh_session(
-            db=db,
-            raw_token=raw_token,
+        user, new_refresh_token, session_id = (
+            rotate_refresh_session(
+                db=db,
+                raw_token=raw_token,
+            )
         )
 
     except RefreshTokenReuseError as exc:
@@ -193,12 +200,16 @@ def refresh_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    # Replace the browser's old refresh cookie.
-    set_refresh_cookie(response, new_refresh_token)
+    # Replace the previous refresh cookie.
+    set_refresh_cookie(
+        response,
+        new_refresh_token,
+    )
 
-    # Generate a new short-lived access token.
+    # Issue a new JWT for the same active session family.
     access_token = create_access_token(
         subject=str(user.id),
+        session_id=session_id,
     )
 
     return TokenResponse(
@@ -217,7 +228,7 @@ def logout(
     response: Response,
     db: DbSession,
 ) -> dict[str, str]:
-    """Revoke the refresh-token session and clear its cookie."""
+    """Revoke the refresh session and clear its cookie."""
 
     raw_token = request.cookies.get(
         settings.REFRESH_TOKEN_COOKIE_NAME

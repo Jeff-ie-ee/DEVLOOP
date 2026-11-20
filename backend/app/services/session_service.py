@@ -1,4 +1,5 @@
-﻿import hashlib
+﻿
+import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -35,15 +36,16 @@ def generate_refresh_token() -> str:
 def create_refresh_session(
     db: Session,
     user_id: int,
-) -> str:
+) -> tuple[str, str]:
     """Create a new refresh-token session."""
 
     raw_token = generate_refresh_token()
+    family_id = str(uuid4())
 
     refresh_record = RefreshToken(
         user_id=user_id,
         token_hash=hash_refresh_token(raw_token),
-        family_id=str(uuid4()),
+        family_id=family_id,
         expires_at=datetime.now(UTC)
         + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
@@ -51,7 +53,7 @@ def create_refresh_session(
     db.add(refresh_record)
     db.flush()
 
-    return raw_token
+    return raw_token, family_id
 
 
 def _revoke_token_family(
@@ -71,7 +73,10 @@ def _revoke_token_family(
     )
 
 
-def _is_expired(token: RefreshToken, now: datetime) -> bool:
+def _is_expired(
+    token: RefreshToken,
+    now: datetime,
+) -> bool:
     """Compare expiration timestamps safely."""
 
     expires_at = token.expires_at
@@ -82,10 +87,38 @@ def _is_expired(token: RefreshToken, now: datetime) -> bool:
     return expires_at <= now
 
 
+def has_active_refresh_session(
+    db: Session,
+    user_id: int,
+    family_id: str,
+) -> bool:
+    """
+    Verify that the user's session family has an active
+    and unexpired refresh-token record.
+
+    Used to enforce immediate access-token revocation.
+    """
+
+    now = datetime.now(UTC)
+
+    records = db.scalars(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.family_id == family_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+    ).all()
+
+    return any(
+        not _is_expired(record, now)
+        for record in records
+    )
+
+
 def rotate_refresh_session(
     db: Session,
     raw_token: str,
-) -> tuple[User, str]:
+) -> tuple[User, str, str]:
     """Validate and rotate an existing refresh-token session."""
 
     now = datetime.now(UTC)
@@ -99,7 +132,9 @@ def rotate_refresh_session(
     )
 
     if token_record is None:
-        raise InvalidRefreshTokenError("Invalid refresh token.")
+        raise InvalidRefreshTokenError(
+            "Invalid refresh token."
+        )
 
     if token_record.revoked_at is not None:
 
@@ -109,6 +144,7 @@ def rotate_refresh_session(
                 token_record.family_id,
                 now,
             )
+
             db.commit()
 
             raise RefreshTokenReuseError(
@@ -135,13 +171,14 @@ def rotate_refresh_session(
             token_record.family_id,
             now,
         )
+
         db.commit()
 
         raise InvalidRefreshTokenError(
             "User account is unavailable."
         )
 
-    # Generate the replacement token in the same session family.
+    # Generate replacement token within the same session family.
     new_raw_token = generate_refresh_token()
 
     replacement = RefreshToken(
@@ -155,13 +192,13 @@ def rotate_refresh_session(
     db.add(replacement)
     db.flush()
 
-    # Mark the previous token as consumed.
+    # Revoke the old token and link it to its replacement.
     token_record.revoked_at = now
     token_record.replaced_by_token_id = replacement.id
 
     db.commit()
 
-    return user, new_raw_token
+    return user, new_raw_token, token_record.family_id
 
 
 def revoke_refresh_session(
