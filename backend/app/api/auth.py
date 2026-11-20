@@ -19,7 +19,21 @@ from app.services.auth_service import (
     authenticate_user,
     register_user,
 )
-from fastapi import APIRouter, Depends, HTTPException, status
+from app.services.session_service import (
+    InvalidRefreshTokenError,
+    RefreshTokenReuseError,
+    create_refresh_session,
+    revoke_refresh_session,
+    rotate_refresh_session,
+)
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from sqlalchemy.orm import Session
 
 router = APIRouter(
@@ -28,6 +42,35 @@ router = APIRouter(
 )
 
 DbSession = Annotated[Session, Depends(get_db)]
+
+
+def set_refresh_cookie(
+    response: Response,
+    token: str,
+) -> None:
+    """Set the refresh token as an HTTP-only browser cookie."""
+
+    response.set_cookie(
+        key=settings.REFRESH_TOKEN_COOKIE_NAME,
+        value=token,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        httponly=True,
+        secure=settings.REFRESH_TOKEN_COOKIE_SECURE,
+        samesite="lax",
+        path="/auth",
+    )
+
+
+def clear_refresh_cookie(response: Response) -> None:
+    """Remove the refresh-token cookie from the browser."""
+
+    response.delete_cookie(
+        key=settings.REFRESH_TOKEN_COOKIE_NAME,
+        httponly=True,
+        secure=settings.REFRESH_TOKEN_COOKIE_SECURE,
+        samesite="lax",
+        path="/auth",
+    )
 
 
 @router.post(
@@ -64,9 +107,10 @@ def register(
 )
 def login(
     credentials: LoginRequest,
+    response: Response,
     db: DbSession,
 ) -> TokenResponse:
-    """Authenticate a DEVLOOP user and issue a JWT access token."""
+    """Authenticate a user and establish a refresh-token session."""
 
     try:
         user = authenticate_user(
@@ -82,6 +126,19 @@ def login(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
+    # Create the refresh-token session in PostgreSQL.
+    refresh_token = create_refresh_session(
+        db=db,
+        user_id=user.id,
+    )
+
+    # Persist the refresh-token record.
+    db.commit()
+
+    # Store the raw refresh token only in an HTTP-only cookie.
+    set_refresh_cookie(response, refresh_token)
+
+    # Return the short-lived access token in the response body.
     access_token = create_access_token(
         subject=str(user.id),
     )
@@ -91,6 +148,94 @@ def login(
         token_type="bearer",
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
+
+
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    status_code=status.HTTP_200_OK,
+)
+def refresh_access_token(
+    request: Request,
+    response: Response,
+    db: DbSession,
+) -> TokenResponse:
+    """Rotate a refresh token and issue a new access token."""
+
+    raw_token = request.cookies.get(
+        settings.REFRESH_TOKEN_COOKIE_NAME
+    )
+
+    if not raw_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token is missing.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        user, new_refresh_token = rotate_refresh_session(
+            db=db,
+            raw_token=raw_token,
+        )
+
+    except RefreshTokenReuseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh-token reuse detected. Login again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    except InvalidRefreshTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    # Replace the browser's old refresh cookie.
+    set_refresh_cookie(response, new_refresh_token)
+
+    # Generate a new short-lived access token.
+    access_token = create_access_token(
+        subject=str(user.id),
+    )
+
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_200_OK,
+)
+def logout(
+    request: Request,
+    response: Response,
+    db: DbSession,
+) -> dict[str, str]:
+    """Revoke the refresh-token session and clear its cookie."""
+
+    raw_token = request.cookies.get(
+        settings.REFRESH_TOKEN_COOKIE_NAME
+    )
+
+    if raw_token:
+        revoke_refresh_session(
+            db=db,
+            raw_token=raw_token,
+        )
+
+    clear_refresh_cookie(response)
+
+    return {
+        "message": "Logged out successfully.",
+    }
+
+
 @router.get(
     "/me",
     response_model=UserRead,

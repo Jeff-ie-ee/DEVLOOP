@@ -16,7 +16,7 @@ Sprint 2 focuses on developing a secure and structured Identity and Access Manag
 
 The primary goal is to establish a reliable authentication and authorization framework that enables developers to register, log in, access their accounts and interact with platform resources according to their assigned roles.
 
-The sprint introduces secure password management, JSON Web Token (JWT) authentication, authenticated-user identification and Role-Based Access Control (RBAC).
+The sprint introduces secure password management, JSON Web Token (JWT) authentication, authenticated-user identification, Role-Based Access Control (RBAC) and session management.
 
 These functionalities provide the security foundation for subsequent DEVLOOP modules, including the coding workspace, project management, code execution and developer analytics.
 
@@ -33,7 +33,9 @@ The major objectives of Sprint 2 are:
 7. Establish developer and administrator roles.
 8. Implement Role-Based Access Control.
 9. Protect administrative API endpoints.
-10. Validate authentication and authorization through automated and live integration testing.
+10. Implement secure refresh-token management.
+11. Introduce refresh-token rotation and session revocation.
+12. Validate authentication and authorization through automated and live integration testing.
 
 # 3. WORK COMPLETED
 
@@ -91,7 +93,7 @@ Work completed:
 - Verified the UserRole association.
 - Preserved existing database records.
 
-**Migration:** `4a51514eb718`
+**Migration ID:** `4a51514eb718`
 
 ## 3.5 User Login and Authentication
 
@@ -109,8 +111,10 @@ Implemented functionality:
 - Token signature verification.
 - Token expiration validation.
 - Bearer token response formatting.
+- Refresh-session creation after successful login.
+- HTTP-only refresh-token cookie delivery.
 
-Successful authentication returns a signed access token to the client.
+Successful authentication returns a signed access token in the response body and establishes a refresh-token session through an HTTP-only cookie.
 
 ## 3.6 JWT Access Token Implementation
 
@@ -197,10 +201,6 @@ The migration was successfully applied using:
 
 `python -m alembic upgrade head`
 
-Verified migration status:
-
-`375938ef2d2a (head)`
-
 ## 3.10 Administrator Account Provisioning
 
 Developed a separate administrator-provisioning script:
@@ -249,11 +249,141 @@ Functionality includes:
 Pagination parameters:
 
 | Parameter | Default | Validation |
-|---|---:|---|
+|---|---|---|
 | page | 1 | Minimum 1 |
 | page_size | 20 | Between 1 and 100 |
 
 The endpoint uses the UserRead response schema to prevent sensitive password information from being returned.
+
+## 3.12 Refresh Token Database Model
+
+Implemented the RefreshToken SQLAlchemy model.
+
+**Model File:** `backend/app/models/refresh_token.py`
+
+The model stores session-related information for refresh-token management.
+
+Implemented database fields:
+
+| Field | Purpose |
+|---|---|
+| id | Unique refresh-token record identifier |
+| user_id | Associated user identifier |
+| token_hash | SHA-256 hash of the refresh token |
+| family_id | Refresh-token session family identifier |
+| created_at | Token creation timestamp |
+| expires_at | Token expiration timestamp |
+| revoked_at | Token revocation timestamp |
+| replaced_by_token_id | Identifier of the replacement refresh-token record |
+
+The model includes the required foreign-key relationships, unique token-hash index and session-related indexes.
+
+## 3.13 Refresh Token Database Migration
+
+Created and successfully applied the Alembic migration for the refresh-token table.
+
+**Migration ID:** `797edc9aa2f5`
+
+**Migration Name:** Create Refresh Tokens Table
+
+The migration provisions the following database components:
+
+- `refresh_tokens` table.
+- Primary-key constraint.
+- Foreign key referencing the users table.
+- Self-referencing foreign key for replacement-token tracking.
+- Unique index on token_hash.
+- Index on user_id.
+- Index on family_id.
+
+The migration was applied successfully through:
+
+`python -m alembic upgrade head`
+
+PostgreSQL table verification confirmed the existence of all expected columns, indexes and foreign-key constraints.
+
+**Current Migration Head:** `797edc9aa2f5`
+
+## 3.14 Refresh Token Security and Session Service
+
+Implemented the session-management service:
+
+**File:** `backend/app/services/session_service.py`
+
+Work completed:
+
+- Implemented cryptographically secure refresh-token generation.
+- Implemented SHA-256 refresh-token hashing.
+- Stored only hashed refresh tokens in PostgreSQL.
+- Implemented refresh-session creation.
+- Implemented seven-day refresh-token expiration.
+- Implemented refresh-token family tracking.
+- Implemented refresh-token rotation.
+- Implemented previous-token revocation.
+- Implemented replacement-token tracking.
+- Implemented refresh-token reuse detection.
+- Implemented session-family revocation.
+- Implemented refresh-token expiration validation.
+- Implemented rejection of inactive or unavailable user accounts.
+
+The session service ensures that the raw refresh token is not stored directly in the database.
+
+## 3.15 Login, Refresh and Logout Integration
+
+Integrated refresh-session management into the existing authentication API.
+
+### POST /auth/login
+
+Implemented:
+
+- User authentication.
+- Access-token generation.
+- Refresh-token session creation.
+- Storage of the refresh-token hash in PostgreSQL.
+- HTTP-only refresh-token cookie delivery.
+
+### POST /auth/refresh
+
+Implemented:
+
+- Refresh-token extraction from the HTTP-only cookie.
+- Refresh-token hash verification.
+- Token expiration validation.
+- Session-family validation.
+- Refresh-token rotation.
+- Previous-token revocation.
+- Replacement-token creation.
+- New access-token generation.
+- Replacement HTTP-only cookie delivery.
+- Refresh-token reuse detection and session-family revocation.
+
+### POST /auth/logout
+
+Implemented:
+
+- Refresh-token extraction from the browser cookie.
+- Refresh-session revocation.
+- Session-family revocation.
+- Refresh-cookie deletion.
+- Successful logout response.
+
+**Refresh Token Configuration:**
+
+| Parameter | Configuration |
+|---|---|
+| Access Token Lifetime | 30 minutes |
+| Refresh Token Lifetime | 7 days |
+| Refresh Token Storage | SHA-256 hash in PostgreSQL |
+| Cookie Type | HTTP-only |
+| Cookie SameSite | Lax |
+| Local Development Secure Setting | False |
+| Token Rotation | Implemented |
+| Reuse Detection | Implemented |
+| Session Revocation | Implemented |
+
+The Secure cookie setting is disabled only for local HTTP development. Production deployment requires HTTPS, secure cookies and appropriate CSRF protection.
+
+**Important Security Limitation:** Refresh-session revocation does not immediately invalidate previously issued stateless access JWTs. Such access tokens may remain valid until their expiration unless additional server-side access-token revocation or session validation is implemented.
 
 # 4. TECHNOLOGY STACK
 
@@ -268,6 +398,7 @@ The endpoint uses the UserRead response schema to prevent sensitive password inf
 | Password Utility | pwdlib |
 | Authentication | JSON Web Token (JWT) |
 | JWT Library | PyJWT |
+| Refresh Token Hashing | SHA-256 |
 | Data Validation | Pydantic |
 | Email Validation | email-validator |
 | Automated Testing | Pytest |
@@ -287,13 +418,15 @@ The identity and access-management implementation uses the following database ta
 | `users` | Stores developer accounts, identity information and password hashes |
 | `roles` | Stores available platform roles |
 | `user_roles` | Maintains user-to-role assignments |
+| `refresh_tokens` | Stores hashed refresh tokens and session information |
 
 ### Database Migration History
 
 | Migration ID | Purpose |
 |---|---|
-| `4a51514eb718` | Provision default developer role |
-| `375938ef2d2a` | Provision default administrator role |
+| `4a51514eb718` | Seed default developer role |
+| `375938ef2d2a` | Seed default administrator role |
+| `797edc9aa2f5` | Create refresh tokens table |
 
 ### Current Database Roles
 
@@ -302,7 +435,7 @@ The identity and access-management implementation uses the following database ta
 | developer | Standard developer access |
 | admin | Administrative access |
 
-Database interactions are managed through SQLAlchemy, and database schema changes are maintained through Alembic migrations.
+Database interactions are managed through SQLAlchemy, while schema versioning is maintained through Alembic.
 
 # 6. API ENDPOINTS IMPLEMENTED
 
@@ -312,8 +445,10 @@ Database interactions are managed through SQLAlchemy, and database schema change
 | GET | `/health` | Backend health check |
 | GET | `/health/database` | Database connectivity check |
 | POST | `/auth/register` | Register a new developer |
-| POST | `/auth/login` | Authenticate a registered user |
+| POST | `/auth/login` | Authenticate user and establish session |
 | GET | `/auth/me` | Retrieve authenticated user profile |
+| POST | `/auth/refresh` | Rotate refresh token and issue a new access token |
+| POST | `/auth/logout` | Revoke refresh session and clear cookie |
 | GET | `/admin/users` | Retrieve registered users (admin only) |
 
 # 7. BACKEND ARCHITECTURE
@@ -324,7 +459,7 @@ Sprint 2 follows a modular backend architecture with clear separation of respons
 |---|---|
 | API Layer | Handles authentication and administration HTTP requests |
 | Schema Layer | Validates request and response data |
-| Service Layer | Implements registration and authentication business logic |
+| Service Layer | Implements registration, authentication and session-management business logic |
 | Repository Layer | Handles database queries and role operations |
 | Security Layer | Handles password hashing and JWT operations |
 | Dependency Layer | Provides reusable authentication and authorization checks |
@@ -338,9 +473,11 @@ Sprint 2 follows a modular backend architecture with clear separation of respons
 4. The repository layer interacts with PostgreSQL.
 5. Argon2 verifies or hashes passwords.
 6. A signed JWT is generated after successful authentication.
-7. Authenticated-user dependencies validate the token.
-8. The corresponding user is retrieved from PostgreSQL.
-9. The API returns the appropriate response.
+7. A refresh-token session is created and stored in PostgreSQL.
+8. The raw refresh token is delivered through an HTTP-only cookie.
+9. Authenticated-user dependencies validate the access token.
+10. The corresponding user is retrieved from PostgreSQL.
+11. The API returns the appropriate response.
 
 ### Authorization Workflow
 
@@ -352,11 +489,24 @@ Sprint 2 follows a modular backend architecture with clear separation of respons
 6. The requested operation is permitted or rejected.
 7. Unauthorized users receive HTTP 401 or HTTP 403, as appropriate.
 
+### Refresh Token Workflow
+
+1. A user successfully authenticates.
+2. The system generates a cryptographically random refresh token.
+3. A SHA-256 hash of the token is stored in PostgreSQL.
+4. The raw refresh token is delivered through an HTTP-only cookie.
+5. When the access token needs renewal, the browser submits the refresh cookie.
+6. The existing refresh token is verified.
+7. A replacement refresh token is generated within the same token family.
+8. The previous refresh-token record is revoked.
+9. The replacement token is stored as a hash.
+10. A new access token and HTTP-only refresh cookie are returned.
+
 # 8. TESTING AND VALIDATION
 
 Automated testing has been conducted using Pytest and FastAPI TestClient.
 
-Isolated SQLite databases were used for the registration, authentication, identity and RBAC automated integration tests.
+Isolated SQLite databases were used for registration, authentication, identity, RBAC and session-management automated tests.
 
 ## 8.1 Authentication Tests
 
@@ -429,7 +579,21 @@ Isolated SQLite databases were used for the registration, authentication, identi
 
 **Result: 5/5 Passed**
 
-## 8.7 Overall Backend Testing Results
+## 8.7 Session Management Tests
+
+| Test Case | Result |
+|---|---|
+| Login creates HTTP-only refresh cookie | Passed |
+| Refresh token rotation | Passed |
+| Reuse detection and family revocation | Passed |
+| Expired refresh-token rejection | Passed |
+| Missing refresh-cookie rejection | Passed |
+| Logout revokes session | Passed |
+| Refresh after logout rejected | Passed |
+
+**Result: 7/7 Passed**
+
+## 8.8 Overall Backend Testing Results
 
 | Test Category | Tests Passed |
 |---|---:|
@@ -439,11 +603,12 @@ Isolated SQLite databases were used for the registration, authentication, identi
 | Password Security | 4 |
 | Existing API | 2 |
 | Role-Based Access Control | 5 |
-| **TOTAL** | **29/29** |
+| Session Management | 7 |
+| **TOTAL** | **36/36** |
 
-**Overall Result: All 29 automated backend tests passed.**
+**Overall Result: All 36 automated backend tests passed.**
 
-## 8.8 Live RBAC Integration Testing
+## 8.9 Live RBAC Integration Testing
 
 Administrator and developer authorization were successfully verified against the live PostgreSQL database.
 
@@ -455,41 +620,33 @@ Administrator and developer authorization were successfully verified against the
 | Inactive administrator access | 401 Unauthorized | Automated test passed |
 | Unauthenticated admin request | 401 Unauthorized | Automated test passed |
 
-### Verified Administrator Response
-
 The administrator successfully retrieved the registered user profiles:
 
 - `devloop_test_01` – Developer
 - `devloop_admin` – Administrator
 
-The response did not expose password hashes.
+The API response did not expose password hashes.
 
-### Verified Developer Restriction
+The developer account received HTTP 403 Forbidden when attempting to access the administrator-only endpoint.
 
-The developer account received:
+## 8.10 Code Quality and Dependency Validation
 
-**HTTP 403 Forbidden**
+The following validation results were obtained:
 
-Response:
+| Validation | Result |
+|---|---|
+| Full backend automated test suite | 36 passed |
+| Ruff application and test validation | All checks passed |
+| Dependency validation | No broken requirements found |
+| Refresh-token model import | Passed |
+| Refresh-token service imports | Passed |
+| Refresh-token endpoint registration | Passed |
+| Alembic migration validation | Passed |
+| PostgreSQL refresh-token table verification | Passed |
+| Live PostgreSQL administrator access | Passed |
+| Live PostgreSQL developer restriction | Passed |
 
-```json
-{
-  "detail": "You do not have permission to access this resource."
-}
-```
-
-This confirms that ordinary developer accounts cannot access administrator-only resources.
-
-## 8.9 Code Quality and Dependency Validation
-
-- Ruff validation: All checks passed.
-- Dependency validation: No broken requirements found.
-- JWT generation and verification: Passed.
-- Expired-token rejection: Passed.
-- Password hashing validation: Passed.
-- Database migration validation: Passed.
-- Live PostgreSQL administrator access: Passed.
-- Live PostgreSQL developer restriction: Passed.
+**Final Automated Validation:** 36/36 tests passed, Ruff checks passed and no broken Python requirements were found.
 
 # 9. SECURITY MEASURES IMPLEMENTED
 
@@ -509,9 +666,19 @@ The following security measures have been implemented:
 12. Database-backed role verification.
 13. Administrator-only endpoint protection.
 14. HTTP 401 and HTTP 403 authorization handling.
-15. Database transaction rollback on registration and provisioning failures.
+15. Database transaction rollback on provisioning failures.
 16. Protection against password-hash exposure in API responses.
 17. Protection against public administrator-role assignment.
+18. Cryptographically secure refresh-token generation.
+19. SHA-256 refresh-token hashing.
+20. HTTP-only refresh-token cookies.
+21. Refresh-token expiration validation.
+22. Refresh-token rotation.
+23. Refresh-token reuse detection.
+24. Session-family revocation.
+25. Refresh-cookie deletion during logout.
+
+Additional production security work remains, including immediate access-token invalidation, CSRF protection for cookie-based session endpoints and secure HTTPS cookie configuration.
 
 # 10. VERSION CONTROL AND PROJECT MANAGEMENT
 
@@ -530,21 +697,24 @@ https://github.com/Jeff-ie-ee/DEVLOOP
 | `18efb1a` | Implement JWT login authentication |
 | `1d50e0e` | Implement authenticated user identity |
 | `7382218` | Update Sprint 2 progress report |
+| `34f9ac2` | Implement Role-Based Access Control |
 
-The current RBAC implementation, administrator-role migration, provisioning script, administration API and RBAC tests have passed local validation. These changes are pending their GitHub commit and push.
+The refresh-token model, database migration, session service, authentication API integration and session-management tests have passed local validation.
+
+These latest session-management changes and their updated documentation are pending GitHub synchronization.
 
 # 11. REMAINING SPRINT WORK
 
 The following functionalities remain planned for completion.
 
-## 11.1 Session Management
+## 11.1 Access-Token Security Hardening
 
-- Implement refresh-token generation.
-- Implement secure refresh-token storage.
-- Implement refresh-token rotation.
-- Implement token revocation.
-- Implement secure logout functionality.
-- Validate session expiration and token reuse behaviour.
+- Implement immediate access-token revocation or server-side session validation.
+- Validate the session status for protected requests where required.
+- Test access-token invalidation following logout.
+- Review refresh-token concurrency and reuse scenarios.
+- Implement CSRF protection for cookie-based authentication.
+- Configure HTTPS and secure cookies for production.
 
 ## 11.2 Protected Developer APIs
 
@@ -560,7 +730,7 @@ The following functionalities remain planned for completion.
 - Integrate authentication APIs with React.
 - Implement authentication state management.
 - Implement protected workspace navigation.
-- Integrate logout functionality.
+- Integrate refresh and logout functionality.
 
 ## 11.4 Frontend Role Management
 
@@ -585,27 +755,25 @@ The following functionalities remain planned for completion.
 
 Sprint 2 has successfully established the core Identity and Access Management infrastructure for DEVLOOP.
 
-The implementation now supports secure developer registration, Argon2id password hashing, username- and email-based authentication, JWT access-token generation, authenticated-user identification and database-backed Role-Based Access Control.
+The implementation supports secure developer registration, Argon2id password hashing, username- and email-based authentication, JWT access-token generation, authenticated-user identification and database-backed Role-Based Access Control.
 
-Two principal platform roles, developer and administrator, have been provisioned.
+Two platform roles, developer and administrator, have been provisioned. Administrator-only access to user-management functionality has been implemented and verified against live PostgreSQL data.
 
-The administrator can retrieve registered user profiles through the protected administration endpoint, while ordinary developers are prevented from accessing administrator-only resources.
+Session management has also been introduced through refresh-token generation, SHA-256 token hashing, HTTP-only cookie delivery, token rotation, reuse detection and session revocation.
 
-The completed implementation has been validated through 29 automated backend tests, all of which passed.
+The implementation has been validated through 36 automated backend tests, all of which passed. Ruff validation and Python dependency checks also completed successfully.
 
-Live integration testing against PostgreSQL also confirmed successful administrator access and developer authorization restrictions.
-
-The completed work provides the security foundation for the forthcoming session-management, frontend authentication and protected developer workspace capabilities.
+The completed work establishes the security and identity foundation required for the forthcoming developer workspace and engineering productivity modules.
 
 # 13. CONCLUSION
 
 Sprint 2 has made substantial progress towards establishing a secure and structured Identity and Access Management system for DEVLOOP.
 
-The registration, authentication, identity verification and authorization functionalities provide the foundation for identifying developers and controlling access to platform resources.
+The registration, authentication, identity verification, authorization and session-management functionalities provide the foundation for identifying developers and controlling access to platform resources.
 
-The backend now supports separate developer and administrator roles, protected administrative operations and verified access restrictions.
+The backend supports separate developer and administrator roles, protected administrative operations, refresh-token rotation and session revocation.
 
-The next development stage will focus on refresh-token management, secure logout, frontend authentication and broader protected API integration.
+The next development stage will focus on access-token security hardening, frontend authentication, protected workspace integration and final system validation.
 
 **Sprint 2 Status: IN PROGRESS**
 
